@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# TODO At this moment, I only read 50 videos and don't find the other. It woudl be great to have
+# another function to get the remaining videos
+# TODO Clean a little bit the code, some function aren't useful at all (separating create and update
+# array for instance because, at every step VID_tile is recomputed)
+
 # General informations
 PREFIX="http://videos.arte.tv"
 TMP_FILE=/tmp/arte_urls
@@ -35,13 +40,16 @@ FORM_numb=0
 function create_array() {
 if (( $VID_empty )); then
     local index=1
+    # Get Xml Which contains all videos
     wget  "${PREFIX}$(wget  -q -O - http://videos.arte.tv/fr/videos\
     |grep XmlUrl |cut -d "\"" -f2)" -O- -q |\
     grep -EA1 "<(teaserText|targetUrl|title|endDate)>" |\
     grep -vE "(startDate|--$)"  > $TMP_FILE
     while read line; do 
+        # Save title, description, url and date
         if [[ $line =~ "<title>" ]]; then
             read line 
+            # Replaces apostrophes and spaces with _
             line=$(echo $line | sed 's/\(&#39;\| \)/_/g')
             VID_title[$index]="$line"
             CUR_TITLE="$line"
@@ -51,10 +59,13 @@ if (( $VID_empty )); then
             VID_desc[$index]="$line"
             # echo -e "\t${VID_desc[$index]}"
         elif [[ $line =~ targetUrl ]]; then
+            # Extract Url from <targetUrl>
             URL=$(echo $line | sed 's/<[\/]*targetUrl>//g')
             VID_urls[$index]="${PREFIX}${URL}"
             # echo -e "\t${VID_urls[$index]}"
         elif [[ $line =~ "<endDate>" ]]; then
+            # Fetching end date because format is much easier to parse
+            # The start is computed from enddate (-7 days)
             read line
             date=${line%%T*}
             year=$(echo $date | awk -F '-' '{print$1}')
@@ -74,6 +85,7 @@ if (( $VID_empty )); then
                     (( day+=29 ))
                 fi
             fi
+            # Format computed date
             VID_date[$index]=$(printf "%02d-%02d-%04d\n" $day $month $year)
             (( index++ ))
         fi
@@ -85,10 +97,13 @@ fi
 VID_empty=0
 }
 
+# Force the update of the array
 function update_array() {
 VID_empty=1 && create_array
 }
 
+# Print list of available Videos
+# If $1 == true then urls will be printed
 function print_choice_list {
 if (( $VID_empty )); then
     create_array
@@ -97,11 +112,12 @@ echo  -e "\n===================================================="
 echo  -e "*                AVAILABLE VIDEOS                  *"                
 echo  -e "====================================================\n"
 for index in ${!VID_title[@]}; do
-[[ $2 ]] && echo -e "$index. \t${VID_title[$index]}" || echo -e "$index. \t${VID_date[$index]} \t${VID_title[$index]}"
+[[ $2 == true ]] && echo -e "$index. \t${VID_date[$index]} \t${VID_title[$index]}" || echo -e "$index. \t${VID_title[$index]}"
 #    echo -e "\t${VID_desc[$index]}"
 done
 }
 
+# Alias of function print_choice_list (withou url)
 function summary {
     print_choice_list false
 }
@@ -114,6 +130,8 @@ function summary {
 # * print_format_list (prints all the format of the desired video)
 
 
+# Fetch all formats for given Video
+# TODO use an option to get french or german videos (only french for the moment)
 function create_format_array {
 if (( $FORM_empty )); then
     local url=$1
@@ -144,10 +162,12 @@ if (( $FORM_empty )); then
 fi
 }
 
+# Force the update of the array
 function update_format_array {
 FORM_empty=1 && create_format_array $1
 }
 
+# Print a formated list of available formats
 function print_format_list {
 local index=$1
 (( $VID_empty )) && update_array
@@ -195,9 +215,12 @@ echo -e "|----------------------------------------------------------------------
 echo "${VID_desc[$choice]}"
 }
 
+# Download function, if no arguments is given then it will prompt for a video index after printing a
+# summary of videos
 function download {
 #choice=$(echo $1 | awk '{print$1}')
 choice=$1
+# Check if given arguments is an integer
 if [[ $1 != "" ]]; then
     (( VID_empty )) && update_array
     if [[ -z "${choice##*[!0-9]*}" || $choice -le 0 || $choice -ge $VID_numb ]]; then
@@ -216,6 +239,7 @@ else
     done
 fi
 
+# Fetch and print available formats and ask for a choice
 print_format_list $choice
 echo -ne "\nChoose a quality : "
 read qchoice line
@@ -227,6 +251,7 @@ while [[ -z "${qchoice##*[!0-9]*}" || $qchoice -le 0 || $qchoice -ge $FORM_numb 
     read qchoice line
 done
 
+# Check if file already exists, if so then aborting
 local filename=${DL_DIR}/${VID_title[$choice]}_${VID_date[$choice]}.flv
 if [ -e "$filename" ]; then
     echo "The files already exists..."
@@ -234,9 +259,12 @@ if [ -e "$filename" ]; then
     return 1
 fi
 
+# RTMP request
 local request="rtmpdump --host ${FORM_location[$qchoice]} --protocol rtmp --port 1935\
     --app ${FORM_app[$qchoice]} --playpath ${FORM_urls[$qchoice]} \
     -o $filename"
+
+# Debug Print
 echo "$request"
 $request
 }
